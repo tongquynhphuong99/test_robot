@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot generator="Robot 7.2.2 (Python 3.9.21 on linux)" generated="2025-06-11T22:45:27.916572" rpa="false" schemaversion="5">
+<suite id="s1" name="Robot 040 NS" source="/home/demopq/Desktop/Robot_040_NS">
+<suite id="s1-s1" name="Bases" source="/home/demopq/Desktop/Robot_040_NS/Bases">
+<suite id="s1-s1-s1" name="Login" source="/home/demopq/Desktop/Robot_040_NS/Bases/Login">
+<suite id="s1-s1-s1-s1" name="Login" source="/home/demopq/Desktop/Robot_040_NS/Bases/Login/login.robot">
+<test id="s1-s1-s1-s1-t1" name="Login" line="13">
+<kw name="Open Browser" owner="SeleniumLibrary">
+<msg time="2025-06-11T22:45:27.992591" level="INFO">Opening browser 'chrome' to base url 'https://192.168.10.1/'.</msg>
+<arg>${url}</arg>
+<arg>${browser}</arg>
+<doc>Opens a new browser instance to the optional ``url``.</doc>
+<status status="PASS" start="2025-06-11T22:45:27.992204" elapsed="1.573053"/>
+</kw>
+<kw name="Maximize Browser Window" owner="SeleniumLibrary">
+<doc>Maximizes current browser window.</doc>
+<status status="PASS" start="2025-06-11T22:45:29.566127" elapsed="0.021954"/>
+</kw>
+<kw name="loginWebgui">
+<kw name="Click Button" owner="SeleniumLibrary">
+<msg time="2025-06-11T22:45:29.591723" level="INFO">Clicking button 'id:details-button'.</msg>
+<arg>id:details-button</arg>
+<doc>Clicks the button identified by ``locator``.</doc>
+<status status="PASS" start="2025-06-11T22:45:29.590608" elapsed="0.069108"/>
+</kw>
+<kw name="Click Link" owner="SeleniumLibrary">
+<msg time="2025-06-11T22:45:29.660671" level="INFO">Clicking link 'id:proceed-link'.</msg>
+<arg>id:proceed-link</arg>
+<doc>Clicks a link identified by ``locator``.</doc>
+<status status="PASS" start="2025-06-11T22:45:29.660168" elapsed="0.270704"/>
+</kw>
+<kw name="Input Text" owner="SeleniumLibrary">
+<msg time="2025-06-11T22:45:29.931744" level="INFO">Typing text 'admin' into text field 'id:username'.</msg>
+<arg>id:username</arg>
+<arg>${username}</arg>
+<doc>Types the given ``text`` into the text field identified by ``locator``.</doc>
+<status status="PASS" start="2025-06-11T22:45:29.931229" elapsed="0.062908"/>
+</kw>
+<kw name="Input Text" owner="SeleniumLibrary">
+<msg time="2025-06-11T22:45:29.995248" level="INFO">Typing text 'ttcn@99CN' into text field 'id:password'.</msg>
+<arg>id:password</arg>
+<arg>${password}</arg>
+<doc>Types the given ``text`` into the text field identified by ``locator``.</doc>
+<status status="PASS" start="2025-06-11T22:45:29.994608" elapsed="0.055540"/>
+</kw>
+<kw name="Click Button" owner="SeleniumLibrary">
+<msg time="2025-06-11T22:45:30.051219" level="INFO">Clicking button 'id:loginbutton'.</msg>
+<arg>id:loginbutton</arg>
+<doc>Clicks the button identified by ``locator``.</doc>
+<status status="PASS" start="2025-06-11T22:45:30.050645" elapsed="0.057138"/>
+</kw>
+<status status="PASS" start="2025-06-11T22:45:29.589269" elapsed="0.518940"/>
+</kw>
+<kw name="logoutwebgui">
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2025-06-11T22:45:33.109784" level="INFO">Slept 3 seconds.</msg>
+<arg>3</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2025-06-11T22:45:30.109283" elapsed="3.000901"/>
+</kw>
+<kw name="Select Frame" owner="SeleniumLibrary">
+<msg time="2025-06-11T22:45:33.111105" level="INFO">Selecting frame 'header'.</msg>
+<msg time="2025-06-11T22:45:33.284415" level="INFO" html="true">&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td colspan="3"&gt;&lt;a href="selenium-screenshot-2.png"&gt;&lt;img src="selenium-screenshot-2.png" width="800px"&gt;&lt;/a&gt;</msg>
+<msg time="2025-06-11T22:45:33.284773" level="FAIL">Element with locator 'header' not found.</msg>
+<arg>header</arg>
+<doc>Sets frame identified by ``locator`` as the current frame.</doc>
+<status status="FAIL" start="2025-06-11T22:45:33.110549" elapsed="0.175606">Element with locator 'header' not found.</status>
+</kw>
+<kw name="Click Element" owner="SeleniumLibrary">
+<arg>xpath://*[@id="logOut"]/font</arg>
+<doc>Click the element identified by ``locator``.</doc>
+<status status="NOT RUN" start="2025-06-11T22:45:33.286429" elapsed="0.000108"/>
+</kw>
+<kw name="Unselect Frame" owner="SeleniumLibrary">
+<doc>Sets the main frame as the current frame.</doc>
+<status status="NOT RUN" start="2025-06-11T22:45:33.286645" elapsed="0.000060"/>
+</kw>
+<status status="FAIL" start="2025-06-11T22:45:30.108696" elapsed="3.178125">Element with locator 'header' not found.</status>
+</kw>
+<status status="FAIL" start="2025-06-11T22:45:27.991353" elapsed="5.295699">Element with locator 'header' not found.</status>
+</test>
+<status status="FAIL" start="2025-06-11T22:45:27.933746" elapsed="5.354036"/>
+</suite>
+<status status="FAIL" start="2025-06-11T22:45:27.932304" elapsed="5.356426"/>
+</suite>
+<status status="FAIL" start="2025-06-11T22:45:27.930594" elapsed="5.358833"/>
+</suite>
+<status status="FAIL" start="2025-06-11T22:45:27.918619" elapsed="5.371853"/>
+</suite>
+<statistics>
+<total>
+<stat pass="0" fail="1" skip="0">All Tests</stat>
+</total>
+<tag>
+</tag>
+<suite>
+<stat name="Robot 040 NS" id="s1" pass="0" fail="1" skip="0">Robot 040 NS</stat>
+<stat name="Bases" id="s1-s1" pass="0" fail="1" skip="0">Robot 040 NS.Bases</stat>
+<stat name="Login" id="s1-s1-s1" pass="0" fail="1" skip="0">Robot 040 NS.Bases.Login</stat>
+<stat name="Login" id="s1-s1-s1-s1" pass="0" fail="1" skip="0">Robot 040 NS.Bases.Login.Login</stat>
+</suite>
+</statistics>
+<errors>
+</errors>
+</robot>
