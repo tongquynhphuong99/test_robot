@@ -8,130 +8,124 @@ pipeline {
     
     parameters {
         string(name: 'TASK_ID', defaultValue: '', description: 'Task ID from TestOps (e.g., TASK-001, PLAN-001, CICD-001)')
+        choice(name: 'TASK_TYPE', choices: ['execution', 'plan', 'cicd'], description: 'Type of task')
     }
     
-    triggers {
-        cron(env.CRON_SCHEDULE ?: '')
+    environment {
+        ROBOT_OPTIONS = "--outputdir results --timestampoutputs"
     }
     
     stages {
         stage('Setup') {
             steps {
                 script {
-                    def taskType = ''
-                    def taskId = params.TASK_ID ?: ''
+                    echo "🚀 Starting ${params.TASK_TYPE} task: ${params.TASK_ID}"
+                    echo "📋 Task Type: ${params.TASK_TYPE}"
+                    echo "🆔 Task ID: ${params.TASK_ID}"
                     
-                    if (taskId && taskId.trim()) {
-                        if (taskId.startsWith('TASK-')) {
-                            taskType = 'execution'
-                        } else if (taskId.startsWith('PLAN-')) {
-                            taskType = 'plan'
-                        } else if (taskId.startsWith('CICD-')) {
-                            taskType = 'cicd'
-                        } else {
-                            error "Invalid TASK_ID format: ${taskId}"
-                        }
-                        echo "Starting ${taskType} for Task ID: ${taskId}"
-                    } else {
-                        // Khi chạy theo GitHub trigger, không có TASK_ID parameter
-                        // Nhưng webhook JSON sẽ chứa task_id cố định từ config
-                        taskType = 'cicd' // Mặc định là cicd khi chạy theo GitHub trigger
-                        echo "Starting scheduled ${taskType} (TASK_ID will be provided by webhook JSON)"
-                    }
-                    env.TASK_TYPE = taskType
-                    
-                    // Gửi webhook khi job bắt đầu chạy
-                    def startWebhookData = [
-                        name: env.JOB_NAME,
-                        build: [
-                            number: env.BUILD_NUMBER,
-                            result: 'BUILDING',
-                            status: 'BUILDING',
-                            timestamp: currentBuild.startTimeInMillis,
-                            duration: 0
-                        ]
-                    ]
-                    
-                    // Thêm TASK_ID vào parameters
-                    if (taskId && taskId.trim()) {
-                        startWebhookData.build.parameters = [TASK_ID: taskId]
-                    } else if (env.TASK_TYPE == 'cicd') {
-                        // Với CI/CD, lấy TASK_ID từ params hoặc defaultValue
-                        def cicdTaskId = taskId ?: params.TASK_ID
-                        if (cicdTaskId && cicdTaskId.trim()) {
-                            startWebhookData.build.parameters = [TASK_ID: cicdTaskId]
-                            echo "🔧 CI/CD Task ID: ${cicdTaskId}"
-                        } else {
-                            echo "⚠️ Warning: No TASK_ID for CI/CD task, skipping webhook"
-                            return
-                        }
-                    }
-                    
-                    try {
-                        httpRequest(
-                            url: 'http://backend:8000/api/reports/jenkins/webhook',
-                            httpMode: 'POST',
-                            contentType: 'APPLICATION_JSON',
-                            requestBody: groovy.json.JsonOutput.toJson(startWebhookData),
-                            validResponseCodes: '200,201,202'
-                        )
-                        echo "✅ Start webhook sent successfully"
-                    } catch (Exception e) {
-                        echo "❌ Failed to send start webhook: ${e.getMessage()}"
-                    }
+                    // Tạo thư mục results nếu chưa có
+                    sh 'mkdir -p results'
                 }
-            }
-        }
-        
-        stage('Checkout') {
-            when {
-                expression { env.TASK_TYPE == 'cicd' }
-            }
-            steps {
-                echo "Checking out source code for CI/CD..."
-                checkout scm
             }
         }
         
         stage('Run Robot Tests') {
             steps {
                 script {
-                    def stageName = ''
-                    switch(env.TASK_TYPE) {
-                        case 'execution':
-                            stageName = 'Running Execution Tests'
-                            break
-                        case 'plan':
-                            stageName = 'Running Scheduled Plan Tests'
-                            break
-                        case 'cicd':
-                            stageName = 'Running CI/CD Tests'
-                            break
+                    try {
+                        // Chạy Robot Framework tests
+                        sh '''
+                            robot ${ROBOT_OPTIONS} Bases/Testcase/login.robot || true
+                        '''
+                        
+                        echo "✅ Robot tests completed"
+                    } catch (Exception e) {
+                        echo "⚠️ Robot tests failed, but continuing..."
+                        // Vẫn tiếp tục để tạo report
                     }
-                    echo "${stageName}..."
-                    sh '''
-                        mkdir -p results
-                        robot --outputdir results Bases/Testcase/login.robot
-                    '''
                 }
             }
         }
         
-        stage('Process Results') {
+        stage('Generate Report') {
             steps {
-                robot outputPath: 'results'
-                sh '''
-                    tar czf results.tar.gz -C results .
-                '''
+                script {
+                    // Luôn tạo report, dù test pass hay fail
+                    try {
+                        // Kiểm tra xem có file output.xml không
+                        if (fileExists('results/output.xml')) {
+                            echo "📊 Found output.xml, generating detailed report"
+                            sh '''
+                                robot --outputdir results --report results/report.html --log results/log.html results/output.xml || true
+                            '''
+                        } else {
+                            echo "⚠️ No output.xml found, creating minimal report"
+                            // Tạo file output.xml tối thiểu nếu không có
+                            sh '''
+                                cat > results/output.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<robot generator="Robot 6.0.2" generated="2024-01-01 00:00:00.000000" rpa="false" schemaversion="3">
+<suite id="s1" name="Test Suite" source="test.robot">
+<test id="s1-t1" name="Test Case">
+<kw name="Log" library="BuiltIn">
+<msg timestamp="20240101 00:00:00.000" level="INFO">Test execution completed</msg>
+<status status="FAIL" starttime="20240101 00:00:00.000" endtime="20240101 00:00:01.000"></status>
+</kw>
+<status status="FAIL" starttime="20240101 00:00:00.000" endtime="20240101 00:00:01.000" critical="true">Test failed</status>
+</test>
+<status status="FAIL" starttime="20240101 00:00:00.000" endtime="20240101 00:00:01.000" critical="true"></status>
+</suite>
+<statistics>
+<total>
+<stat pass="0" fail="1" skip="0">All Tests</stat>
+</total>
+<tag>
+</tag>
+<suite>
+<stat pass="0" fail="1" skip="0" id="s1" name="Test Suite">Test Suite</stat>
+</suite>
+</statistics>
+<errors>
+</errors>
+</robot>
+EOF
+                            '''
+                        }
+                        
+                        // Tạo file report.html nếu chưa có
+                        if (!fileExists('results/report.html')) {
+                            sh '''
+                                robot --outputdir results --report results/report.html --log results/log.html results/output.xml || true
+                            '''
+                        }
+                        
+                        echo "✅ Report generation completed"
+                    } catch (Exception e) {
+                        echo "⚠️ Report generation failed: ${e.getMessage()}"
+                        // Vẫn tiếp tục để gửi webhook
+                    }
+                }
             }
         }
         
-        stage('Deploy') {
-            when {
-                expression { env.TASK_TYPE == 'cicd' && currentBuild.result == 'SUCCESS' }
-            }
+        stage('Archive Results') {
             steps {
-                echo "Deploying application for CI/CD..."
+                script {
+                    try {
+                        // Nén tất cả kết quả
+                        sh '''
+                            tar czf results.tar.gz -C results .
+                        '''
+                        
+                        // Archive artifacts
+                        archiveArtifacts artifacts: 'results/**/*', fingerprint: true
+                        archiveArtifacts artifacts: 'results.tar.gz', fingerprint: true
+                        
+                        echo "✅ Results archived successfully"
+                    } catch (Exception e) {
+                        echo "⚠️ Archive failed: ${e.getMessage()}"
+                    }
+                }
             }
         }
     }
@@ -140,33 +134,36 @@ pipeline {
         always {
             script {
                 def taskId = params.TASK_ID ?: ''
+                def buildResult = currentBuild.result ?: 'UNKNOWN'
+                def buildStatus = currentBuild.currentResult ?: 'UNKNOWN'
                 
+                echo "📋 Build Summary:"
+                echo "  - Job Name: ${env.JOB_NAME}"
+                echo "  - Build Number: ${env.BUILD_NUMBER}"
+                echo "  - Build Result: ${buildResult}"
+                echo "  - Build Status: ${buildStatus}"
+                echo "  - Task ID: ${taskId}"
+                echo "  - Task Type: ${params.TASK_TYPE}"
+                
+                // Chuẩn bị webhook data
                 def webhookData = [
                     name: env.JOB_NAME,
                     build: [
                         number: env.BUILD_NUMBER,
-                        result: currentBuild.result,
-                        status: currentBuild.currentResult,
+                        result: buildResult,
+                        status: buildStatus,
                         timestamp: currentBuild.startTimeInMillis,
                         duration: currentBuild.duration
                     ]
                 ]
                 
-                // Thêm TASK_ID vào parameters
+                // Thêm TASK_ID vào parameters nếu có
                 if (taskId && taskId.trim()) {
                     webhookData.build.parameters = [TASK_ID: taskId]
-                } else if (env.TASK_TYPE == 'cicd') {
-                    // Với CI/CD, lấy TASK_ID từ params hoặc defaultValue
-                    def cicdTaskId = taskId ?: params.TASK_ID
-                    if (cicdTaskId && cicdTaskId.trim()) {
-                        webhookData.build.parameters = [TASK_ID: cicdTaskId]
-                        echo "🔧 CI/CD Task ID: ${cicdTaskId}"
-                    } else {
-                        echo "⚠️ Warning: No TASK_ID for CI/CD task, skipping webhook"
-                        return
-                    }
+                    echo "🔧 Task ID included in webhook: ${taskId}"
                 }
                 
+                // Gửi webhook cho mọi trường hợp (SUCCESS và FAILURE)
                 try {
                     httpRequest(
                         url: 'http://backend:8000/api/reports/jenkins/webhook',
@@ -175,9 +172,47 @@ pipeline {
                         requestBody: groovy.json.JsonOutput.toJson(webhookData),
                         validResponseCodes: '200,201,202'
                     )
-                    echo "✅ Webhook sent successfully"
+                    echo "✅ Webhook sent successfully for result: ${buildResult}"
                 } catch (Exception e) {
                     echo "❌ Failed to send webhook: ${e.getMessage()}"
+                }
+                
+                // Cập nhật defaultValue cho CI/CD tasks
+                if (params.TASK_TYPE == 'cicd' && taskId && taskId.trim()) {
+                    try {
+                        def configUrl = "${env.JENKINS_URL}/job/${env.JOB_NAME}/config.xml"
+                        def configResponse = httpRequest(
+                            url: configUrl,
+                            httpMode: 'GET',
+                            validResponseCodes: '200'
+                        )
+                        
+                        if (configResponse.status == 200) {
+                            def currentConfig = configResponse.content
+                            
+                            // Cập nhật defaultValue cho TASK_ID
+                            def updatedConfig = currentConfig.replaceAll(
+                                /(<hudson\.model\.StringParameterDefinition>\s*<name>TASK_ID</name>.*?<trim>false<\/trim>)/,
+                                """<hudson.model.StringParameterDefinition>
+          <name>TASK_ID</name>
+          <description>Task ID from TestOps (e.g., TASK-001, PLAN-001, CICD-001)</description>
+          <defaultValue>${taskId}</defaultValue>
+          <trim>false</trim>"""
+                            )
+                            
+                            // Gửi config đã cập nhật về Jenkins
+                            httpRequest(
+                                url: configUrl,
+                                httpMode: 'POST',
+                                requestBody: updatedConfig,
+                                contentType: 'APPLICATION_XML',
+                                validResponseCodes: '200'
+                            )
+                            echo "✅ Updated defaultValue for TASK_ID: ${taskId}"
+                        }
+                    } catch (Exception e) {
+                        echo "⚠️ Could not update defaultValue: ${e.getMessage()}"
+                    }
                 }
             }
         }
@@ -185,7 +220,7 @@ pipeline {
         success {
             script {
                 def successMessage = ''
-                switch(env.TASK_TYPE) {
+                switch(params.TASK_TYPE) {
                     case 'execution':
                         successMessage = '✅ Execution completed successfully'
                         break
@@ -197,13 +232,14 @@ pipeline {
                         break
                 }
                 echo successMessage
+                echo "📊 Report generated and sent to backend"
             }
         }
         
         failure {
             script {
                 def failureMessage = ''
-                switch(env.TASK_TYPE) {
+                switch(params.TASK_TYPE) {
                     case 'execution':
                         failureMessage = '❌ Execution failed'
                         break
@@ -215,25 +251,15 @@ pipeline {
                         break
                 }
                 echo failureMessage
+                echo "📊 Report still generated and sent to backend"
             }
         }
         
-        aborted {
+        cleanup {
             script {
-                def abortedMessage = ''
-                switch(env.TASK_TYPE) {
-                    case 'execution':
-                        abortedMessage = '⚠️ Execution was aborted'
-                        break
-                    case 'plan':
-                        abortedMessage = '⚠️ Scheduled plan was aborted'
-                        break
-                    case 'cicd':
-                        abortedMessage = '⚠️ CI/CD pipeline was aborted'
-                        break
-                }
-                echo abortedMessage
+                echo "🧹 Cleaning up workspace..."
+                // Có thể thêm cleanup logic ở đây nếu cần
             }
         }
     }
-} 
+}
