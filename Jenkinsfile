@@ -8,7 +8,6 @@ pipeline {
     
     parameters {
         string(name: 'TASK_ID', defaultValue: '', description: 'Task ID from TestOps (e.g., TASK-001, PLAN-001, CICD-001)')
-        choice(name: 'TASK_TYPE', choices: ['execution', 'plan', 'cicd'], description: 'Type of task')
     }
     
     triggers {
@@ -19,25 +18,13 @@ pipeline {
         stage('Setup') {
             steps {
                 script {
-                    def taskType = params.TASK_TYPE ?: ''
                     def taskId = params.TASK_ID ?: ''
                     
                     if (taskId && taskId.trim()) {
-                        if (taskId.startsWith('TASK-')) {
-                            taskType = 'execution'
-                        } else if (taskId.startsWith('PLAN-')) {
-                            taskType = 'plan'
-                        } else if (taskId.startsWith('CICD-')) {
-                            taskType = 'cicd'
-                        } else {
-                            echo "Using provided TASK_TYPE: ${taskType}"
-                        }
-                        echo "Starting ${taskType} for Task ID: ${taskId}"
+                        echo "Starting job for Task ID: ${taskId}"
                     } else {
-                        taskType = params.TASK_TYPE ?: 'cicd'
-                        echo "Starting scheduled ${taskType} (TASK_ID will be provided by webhook JSON)"
+                        echo "Starting scheduled job (TASK_ID will be provided by webhook JSON)"
                     }
-                    env.TASK_TYPE = taskType
                     
                     // Gửi webhook khi job bắt đầu chạy
                     def startWebhookData = [
@@ -51,17 +38,9 @@ pipeline {
                         ]
                     ]
                     
-                    // Thêm TASK_ID vào parameters
+                    // Thêm TASK_ID vào parameters nếu có
                     if (taskId && taskId.trim()) {
                         startWebhookData.build.parameters = [TASK_ID: taskId]
-                    } else if (env.TASK_TYPE == 'cicd') {
-                        def cicdTaskId = taskId ?: params.TASK_ID
-                        if (cicdTaskId && cicdTaskId.trim()) {
-                            startWebhookData.build.parameters = [TASK_ID: cicdTaskId]
-                            echo "CI/CD Task ID: ${cicdTaskId}"
-                        } else {
-                            echo "Warning: No TASK_ID for CI/CD task, skipping start webhook"
-                        }
                     }
                     
                     try {
@@ -82,7 +61,7 @@ pipeline {
         
         stage('Checkout') {
             when {
-                expression { env.TASK_TYPE == 'cicd' }
+                expression { params.TASK_ID && params.TASK_ID.startsWith('CICD-') }
             }
             steps {
                 echo "Checking out source code for CI/CD..."
@@ -93,19 +72,7 @@ pipeline {
         stage('Run Robot Tests') {
             steps {
                 script {
-                    def stageName = ''
-                    switch(env.TASK_TYPE) {
-                        case 'execution':
-                            stageName = 'Running Execution Tests'
-                            break
-                        case 'plan':
-                            stageName = 'Running Scheduled Plan Tests'
-                            break
-                        case 'cicd':
-                            stageName = 'Running CI/CD Tests'
-                            break
-                    }
-                    echo "${stageName}..."
+                    echo "Running Robot Tests..."
                     
                     // Tạo thư mục results
                     sh 'mkdir -p results'
@@ -147,7 +114,7 @@ pipeline {
         
         stage('Deploy') {
             when {
-                expression { env.TASK_TYPE == 'cicd' && currentBuild.result == 'SUCCESS' }
+                expression { params.TASK_ID && params.TASK_ID.startsWith('CICD-') && currentBuild.result == 'SUCCESS' }
             }
             steps {
                 echo "Deploying application for CI/CD..."
@@ -171,18 +138,9 @@ pipeline {
                     ]
                 ]
                 
-                // Thêm TASK_ID vào parameters
+                // Thêm TASK_ID vào parameters nếu có
                 if (taskId && taskId.trim()) {
                     webhookData.build.parameters = [TASK_ID: taskId]
-                } else if (env.TASK_TYPE == 'cicd') {
-                    def cicdTaskId = taskId ?: params.TASK_ID
-                    if (cicdTaskId && cicdTaskId.trim()) {
-                        webhookData.build.parameters = [TASK_ID: cicdTaskId]
-                        echo "CI/CD Task ID: ${cicdTaskId}"
-                    } else {
-                        echo "Warning: No TASK_ID for CI/CD task, skipping webhook"
-                        return
-                    }
                 }
                 
                 // Luôn gửi webhook cho mọi trường hợp (SUCCESS và FAILURE)
@@ -203,57 +161,21 @@ pipeline {
         
         success {
             script {
-                def successMessage = ''
-                switch(env.TASK_TYPE) {
-                    case 'execution':
-                        successMessage = 'Execution completed successfully'
-                        break
-                    case 'plan':
-                        successMessage = 'Scheduled plan completed successfully'
-                        break
-                    case 'cicd':
-                        successMessage = 'CI/CD pipeline completed successfully'
-                        break
-                }
-                echo successMessage
+                echo "Job completed successfully"
                 echo "Report generated and sent to backend"
             }
         }
         
         failure {
             script {
-                def failureMessage = ''
-                switch(env.TASK_TYPE) {
-                    case 'execution':
-                        failureMessage = 'Execution failed'
-                        break
-                    case 'plan':
-                        failureMessage = 'Scheduled plan failed'
-                        break
-                    case 'cicd':
-                        failureMessage = 'CI/CD pipeline failed'
-                        break
-                }
-                echo failureMessage
+                echo "Job failed"
                 echo "Report still generated and sent to backend"
             }
         }
         
         aborted {
             script {
-                def abortedMessage = ''
-                switch(env.TASK_TYPE) {
-                    case 'execution':
-                        abortedMessage = 'Execution was aborted'
-                        break
-                    case 'plan':
-                        abortedMessage = 'Scheduled plan was aborted'
-                        break
-                    case 'cicd':
-                        abortedMessage = 'CI/CD pipeline was aborted'
-                        break
-                }
-                echo abortedMessage
+                echo "Job was aborted"
             }
         }
     }
