@@ -7,7 +7,7 @@ pipeline {
     }
     
     parameters {
-        string(name: 'TASK_ID', defaultValue: '', description: 'Task ID from TestOps (e.g., TASK-001, PLAN-001, CICD-001)')
+        string(name: 'TASK_ID', defaultValue: '', description: 'Task ID from TestOps')
         choice(name: 'TASK_TYPE', choices: ['execution', 'plan', 'cicd'], description: 'Type of task')
     }
     
@@ -19,11 +19,9 @@ pipeline {
         stage('Setup') {
             steps {
                 script {
-                    echo "🚀 Starting ${params.TASK_TYPE} task: ${params.TASK_ID}"
-                    echo "📋 Task Type: ${params.TASK_TYPE}"
-                    echo "🆔 Task ID: ${params.TASK_ID}"
-                    
-                    // Tạo thư mục results nếu chưa có
+                    echo "Starting ${params.TASK_TYPE} task: ${params.TASK_ID}"
+                    echo "Task Type: ${params.TASK_TYPE}"
+                    echo "Task ID: ${params.TASK_ID}"
                     sh 'mkdir -p results'
                 }
             }
@@ -33,15 +31,10 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Chạy Robot Framework tests
-                        sh '''
-                            robot ${ROBOT_OPTIONS} Bases/Testcase/login.robot || true
-                        '''
-                        
-                        echo "✅ Robot tests completed"
+                        sh 'robot ${ROBOT_OPTIONS} Bases/Testcase/login.robot || true'
+                        echo "Robot tests completed"
                     } catch (Exception e) {
-                        echo "⚠️ Robot tests failed, but continuing..."
-                        // Vẫn tiếp tục để tạo report
+                        echo "Robot tests failed, but continuing..."
                     }
                 }
             }
@@ -50,17 +43,12 @@ pipeline {
         stage('Generate Report') {
             steps {
                 script {
-                    // Luôn tạo report, dù test pass hay fail
                     try {
-                        // Kiểm tra xem có file output.xml không
                         if (fileExists('results/output.xml')) {
-                            echo "📊 Found output.xml, generating detailed report"
-                            sh '''
-                                robot --outputdir results --report results/report.html --log results/log.html results/output.xml || true
-                            '''
+                            echo "Found output.xml, generating detailed report"
+                            sh 'robot --outputdir results --report results/report.html --log results/log.html results/output.xml || true'
                         } else {
-                            echo "⚠️ No output.xml found, creating minimal report"
-                            // Tạo file output.xml tối thiểu nếu không có
+                            echo "No output.xml found, creating minimal report"
                             sh '''
                                 cat > results/output.xml << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -92,17 +80,13 @@ EOF
                             '''
                         }
                         
-                        // Tạo file report.html nếu chưa có
                         if (!fileExists('results/report.html')) {
-                            sh '''
-                                robot --outputdir results --report results/report.html --log results/log.html results/output.xml || true
-                            '''
+                            sh 'robot --outputdir results --report results/report.html --log results/log.html results/output.xml || true'
                         }
                         
-                        echo "✅ Report generation completed"
+                        echo "Report generation completed"
                     } catch (Exception e) {
-                        echo "⚠️ Report generation failed: ${e.getMessage()}"
-                        // Vẫn tiếp tục để gửi webhook
+                        echo "Report generation failed: ${e.getMessage()}"
                     }
                 }
             }
@@ -112,18 +96,12 @@ EOF
             steps {
                 script {
                     try {
-                        // Nén tất cả kết quả
-                        sh '''
-                            tar czf results.tar.gz -C results .
-                        '''
-                        
-                        // Archive artifacts
+                        sh 'tar czf results.tar.gz -C results .'
                         archiveArtifacts artifacts: 'results/**/*', fingerprint: true
                         archiveArtifacts artifacts: 'results.tar.gz', fingerprint: true
-                        
-                        echo "✅ Results archived successfully"
+                        echo "Results archived successfully"
                     } catch (Exception e) {
-                        echo "⚠️ Archive failed: ${e.getMessage()}"
+                        echo "Archive failed: ${e.getMessage()}"
                     }
                 }
             }
@@ -137,7 +115,7 @@ EOF
                 def buildResult = currentBuild.result ?: 'UNKNOWN'
                 def buildStatus = currentBuild.currentResult ?: 'UNKNOWN'
                 
-                echo "📋 Build Summary:"
+                echo "Build Summary:"
                 echo "  - Job Name: ${env.JOB_NAME}"
                 echo "  - Build Number: ${env.BUILD_NUMBER}"
                 echo "  - Build Result: ${buildResult}"
@@ -145,7 +123,6 @@ EOF
                 echo "  - Task ID: ${taskId}"
                 echo "  - Task Type: ${params.TASK_TYPE}"
                 
-                // Chuẩn bị webhook data
                 def webhookData = [
                     name: env.JOB_NAME,
                     build: [
@@ -157,13 +134,11 @@ EOF
                     ]
                 ]
                 
-                // Thêm TASK_ID vào parameters nếu có
                 if (taskId && taskId.trim()) {
                     webhookData.build.parameters = [TASK_ID: taskId]
-                    echo "🔧 Task ID included in webhook: ${taskId}"
+                    echo "Task ID included in webhook: ${taskId}"
                 }
                 
-                // Gửi webhook cho mọi trường hợp (SUCCESS và FAILURE)
                 try {
                     httpRequest(
                         url: 'http://backend:8000/api/reports/jenkins/webhook',
@@ -172,43 +147,9 @@ EOF
                         requestBody: groovy.json.JsonOutput.toJson(webhookData),
                         validResponseCodes: '200,201,202'
                     )
-                    echo "✅ Webhook sent successfully for result: ${buildResult}"
+                    echo "Webhook sent successfully for result: ${buildResult}"
                 } catch (Exception e) {
-                    echo "❌ Failed to send webhook: ${e.getMessage()}"
-                }
-                
-                // Cập nhật defaultValue cho CI/CD tasks
-                if (params.TASK_TYPE == 'cicd' && taskId && taskId.trim()) {
-                    try {
-                        def configUrl = "${env.JENKINS_URL}/job/${env.JOB_NAME}/config.xml"
-                        def configResponse = httpRequest(
-                            url: configUrl,
-                            httpMode: 'GET',
-                            validResponseCodes: '200'
-                        )
-                        
-                        if (configResponse.status == 200) {
-                            def currentConfig = configResponse.content
-                            
-                            // Cập nhật defaultValue cho TASK_ID - sử dụng pattern đơn giản hơn
-                            def updatedConfig = currentConfig.replaceAll(
-                                /<defaultValue><\/defaultValue>/,
-                                "<defaultValue>${taskId}</defaultValue>"
-                            )
-                            
-                            // Gửi config đã cập nhật về Jenkins
-                            httpRequest(
-                                url: configUrl,
-                                httpMode: 'POST',
-                                requestBody: updatedConfig,
-                                contentType: 'APPLICATION_XML',
-                                validResponseCodes: '200'
-                            )
-                            echo "✅ Updated defaultValue for TASK_ID: ${taskId}"
-                        }
-                    } catch (Exception e) {
-                        echo "⚠️ Could not update defaultValue: ${e.getMessage()}"
-                    }
+                    echo "Failed to send webhook: ${e.getMessage()}"
                 }
             }
         }
@@ -218,17 +159,17 @@ EOF
                 def successMessage = ''
                 switch(params.TASK_TYPE) {
                     case 'execution':
-                        successMessage = '✅ Execution completed successfully'
+                        successMessage = 'Execution completed successfully'
                         break
                     case 'plan':
-                        successMessage = '✅ Scheduled plan completed successfully'
+                        successMessage = 'Scheduled plan completed successfully'
                         break
                     case 'cicd':
-                        successMessage = '✅ CI/CD pipeline completed successfully'
+                        successMessage = 'CI/CD pipeline completed successfully'
                         break
                 }
                 echo successMessage
-                echo "📊 Report generated and sent to backend"
+                echo "Report generated and sent to backend"
             }
         }
         
@@ -237,24 +178,23 @@ EOF
                 def failureMessage = ''
                 switch(params.TASK_TYPE) {
                     case 'execution':
-                        failureMessage = '❌ Execution failed'
+                        failureMessage = 'Execution failed'
                         break
                     case 'plan':
-                        failureMessage = '❌ Scheduled plan failed'
+                        failureMessage = 'Scheduled plan failed'
                         break
                     case 'cicd':
-                        failureMessage = '❌ CI/CD pipeline failed'
+                        failureMessage = 'CI/CD pipeline failed'
                         break
                 }
                 echo failureMessage
-                echo "📊 Report still generated and sent to backend"
+                echo "Report still generated and sent to backend"
             }
         }
         
         cleanup {
             script {
-                echo "🧹 Cleaning up workspace..."
-                // Có thể thêm cleanup logic ở đây nếu cần
+                echo "Cleaning up workspace..."
             }
         }
     }
