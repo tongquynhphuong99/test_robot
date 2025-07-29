@@ -7,31 +7,112 @@ pipeline {
     }
     
     parameters {
-        string(name: 'TASK_ID', defaultValue: '', description: 'Task ID from TestOps')
+        string(name: 'TASK_ID', defaultValue: '', description: 'Task ID from TestOps (e.g., TASK-001, PLAN-001, CICD-001)')
         choice(name: 'TASK_TYPE', choices: ['execution', 'plan', 'cicd'], description: 'Type of task')
     }
     
-    environment {
-        ROBOT_OPTIONS = "--outputdir results --timestampoutputs"
+    triggers {
+        cron(env.CRON_SCHEDULE ?: '')
     }
     
     stages {
         stage('Setup') {
             steps {
                 script {
-                    echo "Starting ${params.TASK_TYPE} task: ${params.TASK_ID}"
-                    echo "Task Type: ${params.TASK_TYPE}"
-                    echo "Task ID: ${params.TASK_ID}"
-                    sh 'mkdir -p results'
+                    def taskType = params.TASK_TYPE ?: ''
+                    def taskId = params.TASK_ID ?: ''
+                    
+                    if (taskId && taskId.trim()) {
+                        if (taskId.startsWith('TASK-')) {
+                            taskType = 'execution'
+                        } else if (taskId.startsWith('PLAN-')) {
+                            taskType = 'plan'
+                        } else if (taskId.startsWith('CICD-')) {
+                            taskType = 'cicd'
+                        } else {
+                            echo "Using provided TASK_TYPE: ${taskType}"
+                        }
+                        echo "Starting ${taskType} for Task ID: ${taskId}"
+                    } else {
+                        taskType = params.TASK_TYPE ?: 'cicd'
+                        echo "Starting scheduled ${taskType} (TASK_ID will be provided by webhook JSON)"
+                    }
+                    env.TASK_TYPE = taskType
+                    
+                    // Gửi webhook khi job bắt đầu chạy
+                    def startWebhookData = [
+                        name: env.JOB_NAME,
+                        build: [
+                            number: env.BUILD_NUMBER,
+                            result: 'BUILDING',
+                            status: 'BUILDING',
+                            timestamp: currentBuild.startTimeInMillis,
+                            duration: 0
+                        ]
+                    ]
+                    
+                    // Thêm TASK_ID vào parameters
+                    if (taskId && taskId.trim()) {
+                        startWebhookData.build.parameters = [TASK_ID: taskId]
+                    } else if (env.TASK_TYPE == 'cicd') {
+                        def cicdTaskId = taskId ?: params.TASK_ID
+                        if (cicdTaskId && cicdTaskId.trim()) {
+                            startWebhookData.build.parameters = [TASK_ID: cicdTaskId]
+                            echo "CI/CD Task ID: ${cicdTaskId}"
+                        } else {
+                            echo "Warning: No TASK_ID for CI/CD task, skipping start webhook"
+                        }
+                    }
+                    
+                    try {
+                        httpRequest(
+                            url: 'http://backend:8000/api/reports/jenkins/webhook',
+                            httpMode: 'POST',
+                            contentType: 'APPLICATION_JSON',
+                            requestBody: groovy.json.JsonOutput.toJson(startWebhookData),
+                            validResponseCodes: '200,201,202'
+                        )
+                        echo "Start webhook sent successfully"
+                    } catch (Exception e) {
+                        echo "Failed to send start webhook: ${e.getMessage()}"
+                    }
                 }
+            }
+        }
+        
+        stage('Checkout') {
+            when {
+                expression { env.TASK_TYPE == 'cicd' }
+            }
+            steps {
+                echo "Checking out source code for CI/CD..."
+                checkout scm
             }
         }
         
         stage('Run Robot Tests') {
             steps {
                 script {
+                    def stageName = ''
+                    switch(env.TASK_TYPE) {
+                        case 'execution':
+                            stageName = 'Running Execution Tests'
+                            break
+                        case 'plan':
+                            stageName = 'Running Scheduled Plan Tests'
+                            break
+                        case 'cicd':
+                            stageName = 'Running CI/CD Tests'
+                            break
+                    }
+                    echo "${stageName}..."
+                    
+                    // Tạo thư mục results
+                    sh 'mkdir -p results'
+                    
+                    // Chạy Robot tests với || true để không dừng pipeline khi fail
                     try {
-                        sh 'robot ${ROBOT_OPTIONS} Bases/Testcase/login.robot || true'
+                        sh 'robot --outputdir results Bases/Testcase/ || true'
                         echo "Robot tests completed"
                     } catch (Exception e) {
                         echo "Robot tests failed, but continuing..."
@@ -40,92 +121,36 @@ pipeline {
             }
         }
         
-        stage('Generate Report') {
+        stage('Process Results') {
             steps {
                 script {
                     try {
+                        // Publish Robot results để hiển thị trong Jenkins UI
                         if (fileExists('results/output.xml')) {
-                            echo "Found output.xml, generating detailed report"
-                            sh 'robot --outputdir results --report results/report.html --log results/log.html results/output.xml || true'
+                            robot outputPath: 'results'
+                            echo "Robot results published successfully"
                         } else {
-                            echo "No output.xml found, creating minimal report"
-                            sh '''
-                                cat > results/output.xml << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<robot generator="Robot 6.0.2" generated="2024-01-01 00:00:00.000000" rpa="false" schemaversion="3">
-<suite id="s1" name="Test Suite" source="test.robot">
-<test id="s1-t1" name="Test Case">
-<kw name="Log" library="BuiltIn">
-<msg timestamp="20240101 00:00:00.000" level="INFO">Test execution completed</msg>
-<status status="FAIL" starttime="20240101 00:00:00.000" endtime="20240101 00:00:01.000"></status>
-</kw>
-<status status="FAIL" starttime="20240101 00:00:00.000" endtime="20240101 00:00:01.000" critical="true">Test failed</status>
-</test>
-<status status="FAIL" starttime="20240101 00:00:00.000" endtime="20240101 00:00:01.000" critical="true"></status>
-</suite>
-<statistics>
-<total>
-<stat pass="0" fail="1" skip="0">All Tests</stat>
-</total>
-<tag>
-</tag>
-<suite>
-<stat pass="0" fail="1" skip="0" id="s1" name="Test Suite">Test Suite</stat>
-</suite>
-</statistics>
-<errors>
-</errors>
-</robot>
-EOF
-                            '''
+                            echo "No output.xml found, skipping Robot results publishing"
                         }
                         
-                        if (!fileExists('results/report.html')) {
-                            sh 'robot --outputdir results --report results/report.html --log results/log.html results/output.xml || true'
-                        }
-                        
-                        echo "Report generation completed"
-                    } catch (Exception e) {
-                        echo "Report generation failed: ${e.getMessage()}"
-                    }
-                }
-            }
-        }
-        
-        stage('Archive Results') {
-            steps {
-                script {
-                    try {
+                        // Nén kết quả
                         sh 'tar czf results.tar.gz -C results .'
                         archiveArtifacts artifacts: 'results/**/*', fingerprint: true
                         archiveArtifacts artifacts: 'results.tar.gz', fingerprint: true
                         echo "Results archived successfully"
                     } catch (Exception e) {
-                        echo "Archive failed: ${e.getMessage()}"
+                        echo "Process results failed: ${e.getMessage()}"
                     }
                 }
             }
         }
         
-        stage('Publish Robot Results') {
+        stage('Deploy') {
+            when {
+                expression { env.TASK_TYPE == 'cicd' && currentBuild.result == 'SUCCESS' }
+            }
             steps {
-                script {
-                    if (fileExists('results/output.xml')) {
-                        step([$class: 'RobotPublisher',
-                              outputPath: 'results',
-                              outputFileName: 'output.xml',
-                              reportFileName: 'report.html',
-                              logFileName: 'log.html',
-                              disableArchiveOutput: false,
-                              passThreshold: 0,
-                              unstableThreshold: 0,
-                              onlyCritical: false,
-                              otherFiles: 'results/**/*.html,results/**/*.png,results/**/*.jpg,results/**/*.gif,results/**/*.css,results/**/*.js'])
-                        echo "Robot results published successfully"
-                    } else {
-                        echo "No output.xml found, skipping Robot results publishing"
-                    }
-                }
+                echo "Deploying application for CI/CD..."
             }
         }
     }
@@ -134,33 +159,33 @@ EOF
         always {
             script {
                 def taskId = params.TASK_ID ?: ''
-                def buildResult = currentBuild.result ?: 'UNKNOWN'
-                def buildStatus = currentBuild.currentResult ?: 'UNKNOWN'
-                
-                echo "Build Summary:"
-                echo "  - Job Name: ${env.JOB_NAME}"
-                echo "  - Build Number: ${env.BUILD_NUMBER}"
-                echo "  - Build Result: ${buildResult}"
-                echo "  - Build Status: ${buildStatus}"
-                echo "  - Task ID: ${taskId}"
-                echo "  - Task Type: ${params.TASK_TYPE}"
                 
                 def webhookData = [
                     name: env.JOB_NAME,
                     build: [
                         number: env.BUILD_NUMBER,
-                        result: buildResult,
-                        status: buildStatus,
+                        result: currentBuild.result,
+                        status: currentBuild.currentResult,
                         timestamp: currentBuild.startTimeInMillis,
                         duration: currentBuild.duration
                     ]
                 ]
                 
+                // Thêm TASK_ID vào parameters
                 if (taskId && taskId.trim()) {
                     webhookData.build.parameters = [TASK_ID: taskId]
-                    echo "Task ID included in webhook: ${taskId}"
+                } else if (env.TASK_TYPE == 'cicd') {
+                    def cicdTaskId = taskId ?: params.TASK_ID
+                    if (cicdTaskId && cicdTaskId.trim()) {
+                        webhookData.build.parameters = [TASK_ID: cicdTaskId]
+                        echo "CI/CD Task ID: ${cicdTaskId}"
+                    } else {
+                        echo "Warning: No TASK_ID for CI/CD task, skipping webhook"
+                        return
+                    }
                 }
                 
+                // Luôn gửi webhook cho mọi trường hợp (SUCCESS và FAILURE)
                 try {
                     httpRequest(
                         url: 'http://backend:8000/api/reports/jenkins/webhook',
@@ -169,7 +194,7 @@ EOF
                         requestBody: groovy.json.JsonOutput.toJson(webhookData),
                         validResponseCodes: '200,201,202'
                     )
-                    echo "Webhook sent successfully for result: ${buildResult}"
+                    echo "Webhook sent successfully for result: ${currentBuild.result}"
                 } catch (Exception e) {
                     echo "Failed to send webhook: ${e.getMessage()}"
                 }
@@ -179,7 +204,7 @@ EOF
         success {
             script {
                 def successMessage = ''
-                switch(params.TASK_TYPE) {
+                switch(env.TASK_TYPE) {
                     case 'execution':
                         successMessage = 'Execution completed successfully'
                         break
@@ -198,7 +223,7 @@ EOF
         failure {
             script {
                 def failureMessage = ''
-                switch(params.TASK_TYPE) {
+                switch(env.TASK_TYPE) {
                     case 'execution':
                         failureMessage = 'Execution failed'
                         break
@@ -214,9 +239,21 @@ EOF
             }
         }
         
-        cleanup {
+        aborted {
             script {
-                echo "Cleaning up workspace..."
+                def abortedMessage = ''
+                switch(env.TASK_TYPE) {
+                    case 'execution':
+                        abortedMessage = 'Execution was aborted'
+                        break
+                    case 'plan':
+                        abortedMessage = 'Scheduled plan was aborted'
+                        break
+                    case 'cicd':
+                        abortedMessage = 'CI/CD pipeline was aborted'
+                        break
+                }
+                echo abortedMessage
             }
         }
     }
