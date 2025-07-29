@@ -8,6 +8,7 @@ pipeline {
     
     parameters {
         string(name: 'TASK_ID', defaultValue: '', description: 'Task ID from TestOps (e.g., TASK-001, PLAN-001, CICD-001)')
+        choice(name: 'TASK_TYPE', choices: ['execution', 'plan', 'cicd'], description: 'Type of task')
     }
     
     triggers {
@@ -18,7 +19,7 @@ pipeline {
         stage('Setup') {
             steps {
                 script {
-                    def taskType = ''
+                    def taskType = params.TASK_TYPE ?: ''
                     def taskId = params.TASK_ID ?: ''
                     
                     if (taskId && taskId.trim()) {
@@ -29,13 +30,11 @@ pipeline {
                         } else if (taskId.startsWith('CICD-')) {
                             taskType = 'cicd'
                         } else {
-                            error "Invalid TASK_ID format: ${taskId}"
+                            echo "Using provided TASK_TYPE: ${taskType}"
                         }
                         echo "Starting ${taskType} for Task ID: ${taskId}"
                     } else {
-                        // Khi chạy theo GitHub trigger, không có TASK_ID parameter
-                        // Nhưng webhook JSON sẽ chứa task_id cố định từ config
-                        taskType = 'cicd' // Mặc định là cicd khi chạy theo GitHub trigger
+                        taskType = params.TASK_TYPE ?: 'cicd'
                         echo "Starting scheduled ${taskType} (TASK_ID will be provided by webhook JSON)"
                     }
                     env.TASK_TYPE = taskType
@@ -56,14 +55,12 @@ pipeline {
                     if (taskId && taskId.trim()) {
                         startWebhookData.build.parameters = [TASK_ID: taskId]
                     } else if (env.TASK_TYPE == 'cicd') {
-                        // Với CI/CD, lấy TASK_ID từ params hoặc defaultValue
                         def cicdTaskId = taskId ?: params.TASK_ID
                         if (cicdTaskId && cicdTaskId.trim()) {
                             startWebhookData.build.parameters = [TASK_ID: cicdTaskId]
-                            echo "🔧 CI/CD Task ID: ${cicdTaskId}"
+                            echo "CI/CD Task ID: ${cicdTaskId}"
                         } else {
-                            echo "⚠️ Warning: No TASK_ID for CI/CD task, skipping webhook"
-                            return
+                            echo "Warning: No TASK_ID for CI/CD task, skipping start webhook"
                         }
                     }
                     
@@ -75,9 +72,9 @@ pipeline {
                             requestBody: groovy.json.JsonOutput.toJson(startWebhookData),
                             validResponseCodes: '200,201,202'
                         )
-                        echo "✅ Start webhook sent successfully"
+                        echo "Start webhook sent successfully"
                     } catch (Exception e) {
-                        echo "❌ Failed to send start webhook: ${e.getMessage()}"
+                        echo "Failed to send start webhook: ${e.getMessage()}"
                     }
                 }
             }
@@ -109,20 +106,42 @@ pipeline {
                             break
                     }
                     echo "${stageName}..."
-                    sh '''
-                        mkdir -p results
-                        robot --outputdir results Bases/Testcase/
-                    '''
+                    
+                    // Tạo thư mục results
+                    sh 'mkdir -p results'
+                    
+                    // Chạy Robot tests với || true để không dừng pipeline khi fail
+                    try {
+                        sh 'robot --outputdir results Bases/Testcase/ || true'
+                        echo "Robot tests completed"
+                    } catch (Exception e) {
+                        echo "Robot tests failed, but continuing..."
+                    }
                 }
             }
         }
         
         stage('Process Results') {
             steps {
-                robot outputPath: 'results'
-                sh '''
-                    tar czf results.tar.gz -C results .
-                '''
+                script {
+                    try {
+                        // Publish Robot results để hiển thị trong Jenkins UI
+                        if (fileExists('results/output.xml')) {
+                            robot outputPath: 'results'
+                            echo "Robot results published successfully"
+                        } else {
+                            echo "No output.xml found, skipping Robot results publishing"
+                        }
+                        
+                        // Nén kết quả
+                        sh 'tar czf results.tar.gz -C results .'
+                        archiveArtifacts artifacts: 'results/**/*', fingerprint: true
+                        archiveArtifacts artifacts: 'results.tar.gz', fingerprint: true
+                        echo "Results archived successfully"
+                    } catch (Exception e) {
+                        echo "Process results failed: ${e.getMessage()}"
+                    }
+                }
             }
         }
         
@@ -156,17 +175,17 @@ pipeline {
                 if (taskId && taskId.trim()) {
                     webhookData.build.parameters = [TASK_ID: taskId]
                 } else if (env.TASK_TYPE == 'cicd') {
-                    // Với CI/CD, lấy TASK_ID từ params hoặc defaultValue
                     def cicdTaskId = taskId ?: params.TASK_ID
                     if (cicdTaskId && cicdTaskId.trim()) {
                         webhookData.build.parameters = [TASK_ID: cicdTaskId]
-                        echo "🔧 CI/CD Task ID: ${cicdTaskId}"
+                        echo "CI/CD Task ID: ${cicdTaskId}"
                     } else {
-                        echo "⚠️ Warning: No TASK_ID for CI/CD task, skipping webhook"
+                        echo "Warning: No TASK_ID for CI/CD task, skipping webhook"
                         return
                     }
                 }
                 
+                // Luôn gửi webhook cho mọi trường hợp (SUCCESS và FAILURE)
                 try {
                     httpRequest(
                         url: 'http://backend:8000/api/reports/jenkins/webhook',
@@ -175,9 +194,9 @@ pipeline {
                         requestBody: groovy.json.JsonOutput.toJson(webhookData),
                         validResponseCodes: '200,201,202'
                     )
-                    echo "✅ Webhook sent successfully"
+                    echo "Webhook sent successfully for result: ${currentBuild.result}"
                 } catch (Exception e) {
-                    echo "❌ Failed to send webhook: ${e.getMessage()}"
+                    echo "Failed to send webhook: ${e.getMessage()}"
                 }
             }
         }
@@ -187,16 +206,17 @@ pipeline {
                 def successMessage = ''
                 switch(env.TASK_TYPE) {
                     case 'execution':
-                        successMessage = '✅ Execution completed successfully'
+                        successMessage = 'Execution completed successfully'
                         break
                     case 'plan':
-                        successMessage = '✅ Scheduled plan completed successfully'
+                        successMessage = 'Scheduled plan completed successfully'
                         break
                     case 'cicd':
-                        successMessage = '✅ CI/CD pipeline completed successfully'
+                        successMessage = 'CI/CD pipeline completed successfully'
                         break
                 }
                 echo successMessage
+                echo "Report generated and sent to backend"
             }
         }
         
@@ -205,16 +225,17 @@ pipeline {
                 def failureMessage = ''
                 switch(env.TASK_TYPE) {
                     case 'execution':
-                        failureMessage = '❌ Execution failed'
+                        failureMessage = 'Execution failed'
                         break
                     case 'plan':
-                        failureMessage = '❌ Scheduled plan failed'
+                        failureMessage = 'Scheduled plan failed'
                         break
                     case 'cicd':
-                        failureMessage = '❌ CI/CD pipeline failed'
+                        failureMessage = 'CI/CD pipeline failed'
                         break
                 }
                 echo failureMessage
+                echo "Report still generated and sent to backend"
             }
         }
         
@@ -223,17 +244,17 @@ pipeline {
                 def abortedMessage = ''
                 switch(env.TASK_TYPE) {
                     case 'execution':
-                        abortedMessage = '⚠️ Execution was aborted'
+                        abortedMessage = 'Execution was aborted'
                         break
                     case 'plan':
-                        abortedMessage = '⚠️ Scheduled plan was aborted'
+                        abortedMessage = 'Scheduled plan was aborted'
                         break
                     case 'cicd':
-                        abortedMessage = '⚠️ CI/CD pipeline was aborted'
+                        abortedMessage = 'CI/CD pipeline was aborted'
                         break
                 }
                 echo abortedMessage
             }
         }
     }
-} 
+}
