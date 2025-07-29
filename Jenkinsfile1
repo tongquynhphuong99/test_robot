@@ -190,14 +190,10 @@ EOF
                         if (configResponse.status == 200) {
                             def currentConfig = configResponse.content
                             
-                            // Cập nhật defaultValue cho TASK_ID
+                            // Cập nhật defaultValue cho TASK_ID - sử dụng pattern đơn giản hơn
                             def updatedConfig = currentConfig.replaceAll(
-                                /(<hudson\.model\.StringParameterDefinition>\s*<name>TASK_ID</name>.*?<trim>false<\/trim>)/,
-                                """<hudson.model.StringParameterDefinition>
-          <name>TASK_ID</name>
-          <description>Task ID from TestOps (e.g., TASK-001, PLAN-001, CICD-001)</description>
-          <defaultValue>${taskId}</defaultValue>
-          <trim>false</trim>"""
+                                /<defaultValue><\/defaultValue>/,
+                                "<defaultValue>${taskId}</defaultValue>"
                             )
                             
                             // Gửi config đã cập nhật về Jenkins
