@@ -31,7 +31,7 @@ pipeline {
             steps {
                 script {
                     try {
-                        sh 'robot ${ROBOT_OPTIONS} Bases/Testcase/login.robot || true'
+                        sh 'robot ${ROBOT_OPTIONS} Bases/Testcase/'
                         echo "Robot tests completed"
                     } catch (Exception e) {
                         echo "Robot tests failed, but continuing..."
