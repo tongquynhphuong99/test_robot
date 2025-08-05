@@ -4,7 +4,7 @@ Library    SeleniumLibrary
 
 *** Variables ***
 ${browser}    chrome
-${url}    https://192.168.10.1/
+${url}    https://192.168.1.1/
 ${username}    admin
 ${password}    ttcn@99CN
 ${WIDTH}             1920
